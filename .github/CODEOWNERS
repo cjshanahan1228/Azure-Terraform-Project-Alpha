@@ -1,0 +1,5 @@
+# Every change, especially Terraform and workflows, needs Colin's review.
+*                     @cjshanahan1228
+/modules/             @cjshanahan1228
+/environments/        @cjshanahan1228
+/.github/workflows/   @cjshanahan1228
