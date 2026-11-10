@@ -1,0 +1,32 @@
+# Terraform
+**/.terraform/*
+*.tfstate
+*.tfstate.*
+crash.log
+crash.*.log
+*.tfplan
+tfplan
+*.tfplan.json
+override.tf
+override.tf.json
+*_override.tf
+*_override.tf.json
+.terraformrc
+terraform.rc
+
+# Local-only variable overrides. The committed environments/<env>/<env>.tfvars
+# and backend.hcl files hold placeholders only — never real secrets.
+*.auto.tfvars
+*.local.tfvars
+*.local.hcl
+
+# Scanners / tooling
+results.sarif
+checkov-results/
+.tflint.d/
+
+# Editors / OS
+.DS_Store
+.idea/
+.vscode/
+*.swp
