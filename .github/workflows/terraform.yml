@@ -1,0 +1,92 @@
+# Terraform CI: format, init, validate and plan.
+#
+# Lives in .github/workflows because that is the only place GitHub Actions
+# loads workflows from (see ci/README.md).
+#
+# - pull_request: always plans against dev.
+# - workflow_dispatch: pick dev, staging or prod.
+#
+# Credentials: ARM_CLIENT_ID / ARM_CLIENT_SECRET / ARM_SUBSCRIPTION_ID /
+# ARM_TENANT_ID repository secrets (a service principal). Until all four exist
+# AND the chosen environments/<env>/backend.hcl has no REPLACE_ME placeholders,
+# the job runs the credential-free checks only (fmt, init -backend=false,
+# validate) and skips backend init + plan with a notice, so CI stays green.
+#
+# Recommended upgrade: replace ARM_CLIENT_SECRET with OIDC federated
+# credentials (an Entra app / user-assigned identity with a federated
+# credential for this repo, `permissions: id-token: write`, and ARM_USE_OIDC=true).
+# No long-lived secret to store or rotate.
+
+name: Terraform
+
+on:
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: Environment to plan
+        type: choice
+        options: [dev, staging, prod]
+        default: dev
+
+permissions:
+  contents: read
+
+concurrency:
+  group: terraform-${{ github.ref }}-${{ inputs.environment || 'dev' }}
+  cancel-in-progress: true
+
+jobs:
+  terraform:
+    name: Terraform
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      TF_ENV: ${{ inputs.environment || 'dev' }}
+      TF_IN_AUTOMATION: "true"
+      TF_INPUT: "false"
+      ARM_CLIENT_ID: ${{ secrets.ARM_CLIENT_ID }}
+      ARM_CLIENT_SECRET: ${{ secrets.ARM_CLIENT_SECRET }}
+      ARM_SUBSCRIPTION_ID: ${{ secrets.ARM_SUBSCRIPTION_ID }}
+      ARM_TENANT_ID: ${{ secrets.ARM_TENANT_ID }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: hashicorp/setup-terraform@dfe3c3f87815947d99a8997f908cb6525fc44e9e # v4.0.1
+        with:
+          terraform_version: "1.17.1"
+          terraform_wrapper: false
+
+      - name: Format check
+        run: terraform fmt -check -recursive
+
+      - name: Init (no backend)
+        run: terraform init -backend=false
+
+      - name: Validate
+        run: terraform validate
+
+      - name: Check for credentials and backend config
+        id: creds
+        run: |
+          backend="environments/${TF_ENV}/backend.hcl"
+          if [ -z "$ARM_CLIENT_ID" ] || [ -z "$ARM_CLIENT_SECRET" ] || [ -z "$ARM_SUBSCRIPTION_ID" ] || [ -z "$ARM_TENANT_ID" ]; then
+            echo "::notice title=Plan skipped::ARM_* secrets are not configured, so backend init and plan were skipped. fmt and validate still ran."
+            echo "ready=false" >> "$GITHUB_OUTPUT"
+          elif grep -q 'REPLACE_ME' "$backend"; then
+            echo "::notice title=Plan skipped::${backend} still has REPLACE_ME placeholders, so backend init and plan were skipped."
+            echo "ready=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "ready=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Init (remote backend)
+        if: steps.creds.outputs.ready == 'true'
+        run: terraform init -reconfigure -backend-config="environments/${TF_ENV}/backend.hcl"
+
+      - name: Plan
+        if: steps.creds.outputs.ready == 'true'
+        run: terraform plan -lock-timeout=5m -var-file="environments/${TF_ENV}/${TF_ENV}.tfvars"
